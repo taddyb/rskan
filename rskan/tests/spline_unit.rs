@@ -144,3 +144,73 @@ fn b_batch_burn_matches_cpu_for_uniform_grid() {
         }
     }
 }
+
+#[test]
+fn coef2curve_roundtrip_burn() {
+    use burn::backend::NdArray;
+    use burn::tensor::{Tensor, TensorData};
+    use ndarray::{Array1, Array2 as NdArray2, Array3};
+
+    type B = NdArray<f32>;
+    let device = Default::default();
+    let (in_dim, out_dim, g_intervals, k) = (3usize, 2usize, 5usize, 3usize);
+    let knots = g_intervals + 1 + 2 * k;
+    let batch = g_intervals + 1;
+
+    // Build extended grid on [-1, 1].
+    let row = Array1::linspace(-1.0_f32, 1.0_f32, g_intervals + 1);
+    let g_pre: NdArray2<f32> =
+        NdArray2::from_shape_fn((in_dim, g_intervals + 1), |(_, j)| row[j]);
+    let grid_full = spline::extend_grid(g_pre.view(), k);
+
+    // x_eval = grid_inner.T (shape [batch, in_dim])
+    let mut x_eval = NdArray2::<f32>::zeros((batch, in_dim));
+    for b in 0..batch {
+        for i in 0..in_dim {
+            x_eval[[b, i]] = grid_full[[i, k + b]];
+        }
+    }
+    // Targets: smooth-ish.
+    let mut targets = Array3::<f32>::zeros((batch, in_dim, out_dim));
+    for b in 0..batch {
+        for i in 0..in_dim {
+            for o in 0..out_dim {
+                let xv = x_eval[[b, i]];
+                targets[[b, i, o]] = xv.powi(o as i32 + 1) + 0.1 * (i as f32);
+            }
+        }
+    }
+
+    let coef_arr = spline::curve2coef(x_eval.view(), targets.view(), grid_full.view(), k);
+
+    // Tensorize and run coef2curve on Burn.
+    // NOTE: Use TensorData::new(vec, shape) — the plan's .convert().reshape() chain
+    // doesn't compile in Burn 0.21.
+    let x_t: Tensor<B, 2> = Tensor::from_data(
+        TensorData::new(x_eval.as_slice().unwrap().to_vec(), [batch, in_dim]),
+        &device,
+    );
+    let g_t: Tensor<B, 2> = Tensor::from_data(
+        TensorData::new(grid_full.as_slice().unwrap().to_vec(), [in_dim, knots]),
+        &device,
+    );
+    let c_t: Tensor<B, 3> = Tensor::from_data(
+        TensorData::new(coef_arr.as_slice().unwrap().to_vec(), [in_dim, out_dim, knots - k - 1]),
+        &device,
+    );
+
+    let y_t = spline::coef2curve(x_t, g_t, c_t, k);
+    assert_eq!(y_t.dims(), [batch, in_dim, out_dim]);
+
+    let y_data = y_t.into_data().convert::<f32>();
+    let y = y_data.as_slice::<f32>().unwrap();
+
+    for b in 0..batch {
+        for i in 0..in_dim {
+            for o in 0..out_dim {
+                let flat = (b * in_dim + i) * out_dim + o;
+                assert_abs_diff_eq!(y[flat], targets[[b, i, o]], epsilon = 1e-4);
+            }
+        }
+    }
+}

@@ -204,3 +204,30 @@ pub fn b_batch<B: Backend>(
     let nan_mask = v.clone().is_nan();
     v.mask_fill(nan_mask, 0.0)
 }
+
+/// Burn-tensor B-spline curve evaluation: given coefficients and inputs,
+/// returns the per-edge spline value before the residual-base sum.
+///
+/// Pykan's `einsum('ijk,jlk->ijl', b, coef)`, rewritten as a batched matmul.
+/// Input shapes:
+/// - `x_eval` `[B, I]`
+/// - `grid`   `[I, K]`
+/// - `coef`   `[I, O, n_basis]` where `n_basis = K - k - 1`
+///
+/// Output `[B, I, O]`.
+pub fn coef2curve<B: Backend>(
+    x_eval: Tensor<B, 2>,
+    grid: Tensor<B, 2>,
+    coef: Tensor<B, 3>,
+    k: usize,
+) -> Tensor<B, 3> {
+    let b = b_batch(x_eval, grid, k);            // [B, I, n_basis]
+    // einsum 'ijk,jlk->ijl':
+    //   permute b   → [I, B, n_basis]
+    //   permute coef→ [I, n_basis, O]
+    //   matmul      → [I, B, O]
+    //   permute     → [B, I, O]
+    let b_p = b.permute([1, 0, 2]);
+    let c_p = coef.permute([0, 2, 1]);
+    b_p.matmul(c_p).permute([1, 0, 2])
+}
