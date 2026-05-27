@@ -189,4 +189,23 @@ impl PyKanLayer {
     fn mask<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         tensor2_to_pyarray(py, self.inner.mask.val())
     }
+
+    fn forward<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let x_view = x.as_array();
+        let (_batch, in_dim) = (x_view.shape()[0], x_view.shape()[1]);
+        let expected_in = self.inner.grid.val().dims()[0];
+        if in_dim != expected_in {
+            return Err(PyValueError::new_err(format!(
+                "x in_dim {in_dim} != layer in_dim {expected_in}"
+            )));
+        }
+        let x_arr: Array2<f32> = x_view.to_owned();
+        let x_t = nd2_to_tensor(x_arr, &self.device);
+        let y_t = self.inner.forward(x_t);
+        Ok(tensor2_to_pyarray(py, y_t))
+    }
 }

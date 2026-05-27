@@ -41,3 +41,20 @@ def test_construct_kanlayer_from_parts_validates_shapes():
             grid=grid, coef=coef, scale_base=sb, scale_sp=ss, mask=mask,
             in_dim=3, out_dim=5, num=5, k=3, seed=1, device="cpu",
         )
+
+
+def test_forward_returns_shape_and_dtype():
+    layer = rskan.KanLayer(
+        in_dim=4, out_dim=3, num=5, k=3, seed=7, device="cpu",
+    )
+    x = np.random.RandomState(0).uniform(-0.5, 0.5, (16, 4)).astype(np.float32)
+    y = layer.forward(x)
+    assert y.dtype == np.float32
+    assert y.shape == (16, 3)
+
+
+def test_forward_rejects_wrong_in_dim():
+    layer = rskan.KanLayer(in_dim=4, out_dim=3, num=5, k=3, seed=7, device="cpu")
+    x = np.zeros((16, 5), dtype=np.float32)        # wrong in_dim
+    with pytest.raises(Exception):
+        layer.forward(x)
