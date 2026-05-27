@@ -250,3 +250,47 @@ fn init_respects_trainability_flags() {
         .init::<AD>(&device);
     assert!(!frozen_sp.scale_sp.is_require_grad());
 }
+
+#[test]
+fn init_from_parts_respects_trainability_flags() {
+    // Same coverage as init_respects_trainability_flags but for the fixture-load path.
+    use burn::backend::{Autodiff, NdArray};
+    type AD = Autodiff<NdArray<f32>>;
+
+    let device = Default::default();
+    let (i, o, num, k) = (3usize, 3usize, 5usize, 3usize);
+    let knots = num + 1 + 2 * k;
+    let n_basis = num + k;
+
+    let ones_2d_ad = |r: usize, c: usize| -> Tensor<AD, 2> {
+        Tensor::from_data(
+            TensorData::new(vec![1.0_f32; r * c], [r, c]),
+            &device,
+        )
+    };
+    let zeros_3d_ad = |d0: usize, d1: usize, d2: usize| -> Tensor<AD, 3> {
+        Tensor::from_data(
+            TensorData::new(vec![0.0_f32; d0 * d1 * d2], [d0, d1, d2]),
+            &device,
+        )
+    };
+
+    let cfg = KanLayerConfig::new(i, o, SEED)
+        .with_num(num).with_k(k)
+        .with_sb_trainable(false);
+
+    let layer: KanLayer<AD> = cfg.init_from_parts(
+        &device,
+        ones_2d_ad(i, knots),
+        zeros_3d_ad(i, o, n_basis),
+        ones_2d_ad(i, o),
+        ones_2d_ad(i, o),
+        ones_2d_ad(i, o),
+    );
+
+    assert!( layer.coef.is_require_grad(),       "coef should be trainable");
+    assert!(!layer.scale_base.is_require_grad(), "scale_base should be frozen (sb_trainable=false)");
+    assert!( layer.scale_sp.is_require_grad(),   "scale_sp should be trainable");
+    assert!(!layer.grid.is_require_grad(),       "grid should be frozen");
+    assert!(!layer.mask.is_require_grad(),       "mask should be frozen");
+}

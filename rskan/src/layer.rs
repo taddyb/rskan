@@ -99,7 +99,7 @@ impl KanLayerConfig {
 
         KanLayer {
             grid:       Param::from_tensor(grid).set_require_grad(false),
-            coef:       Param::from_tensor(coef),
+            coef:       Param::from_tensor(coef).set_require_grad(true),
             scale_base: Param::from_tensor(scale_base).set_require_grad(self.sb_trainable),
             scale_sp:   Param::from_tensor(scale_sp).set_require_grad(self.sp_trainable),
             mask:       Param::from_tensor(mask).set_require_grad(false),
