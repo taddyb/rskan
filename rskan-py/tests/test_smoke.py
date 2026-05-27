@@ -58,3 +58,22 @@ def test_forward_rejects_wrong_in_dim():
     x = np.zeros((16, 5), dtype=np.float32)        # wrong in_dim
     with pytest.raises(Exception):
         layer.forward(x)
+
+
+def test_kan_construct_and_forward():
+    model = rskan.Kan(widths=[3, 5, 2], grid=5, k=3, seed=1, device="cpu")
+    assert model.num_layers() == 2
+    x = np.random.RandomState(0).uniform(-0.5, 0.5, (8, 3)).astype(np.float32)
+    y = model.forward(x)
+    assert y.shape == (8, 2)
+    assert y.dtype == np.float32
+
+
+def test_kan_forward_with_grad_returns_per_layer_grads():
+    model = rskan.Kan(widths=[3, 5, 2], grid=5, k=3, seed=1, device="cpu")
+    x = np.random.RandomState(0).uniform(-0.5, 0.5, (4, 3)).astype(np.float32)
+    y, grads = model.forward_with_grad(x)
+    assert y.shape == (4, 2)
+    assert grads["x"].shape == (4, 3)
+    assert len(grads["layers"]) == 2
+    assert {"coef", "scale_base", "scale_sp"} <= grads["layers"][0].keys()
