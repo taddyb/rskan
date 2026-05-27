@@ -84,3 +84,63 @@ fn curve2coef_roundtrip_recovers_targets() {
         assert_abs_diff_eq!(y1, targets[[j, 0, 1]], epsilon = 1e-4);
     }
 }
+
+#[test]
+fn b_batch_burn_matches_cpu_for_uniform_grid() {
+    use burn::backend::NdArray;
+    use burn::tensor::{Tensor, TensorData};
+    use ndarray::{Array1, Array2 as NdArray2};
+
+    type B = NdArray<f32>;
+    let device = Default::default();
+    let (batch, in_dim, k) = (8usize, 2usize, 3usize);
+    let g_intervals = 4usize;
+    let knots = g_intervals + 1 + 2 * k;                          // = 11
+
+    // Build a uniform extended grid on [-1, 1].
+    let row = Array1::linspace(-1.0_f32, 1.0_f32, g_intervals + 1);
+    let g_pre: NdArray2<f32> =
+        NdArray2::from_shape_fn((in_dim, g_intervals + 1), |(_, j)| row[j]);
+    let grid_full = spline::extend_grid(g_pre.view(), k);          // [I, knots]
+
+    // x sampled in [-0.8, 0.8] so all values are in-domain.
+    let mut x_arr = NdArray2::<f32>::zeros((batch, in_dim));
+    for b in 0..batch {
+        for i in 0..in_dim {
+            x_arr[[b, i]] = -0.8 + 1.6 * (b as f32 + i as f32 * 0.13) / batch as f32;
+        }
+    }
+
+    // CPU reference.
+    let expected = spline::b_batch_nd(x_arr.view(), grid_full.view(), k);
+    assert_eq!(expected.shape(), &[batch, in_dim, knots - k - 1]);
+
+    // Burn computation. `TensorData::new(vec, shape)` is the canonical
+    // constructor in Burn 0.21; the plan's chained `.convert().reshape()` form
+    // does not exist on `TensorData` (only on `Tensor`).
+    let x_t: Tensor<B, 2> = Tensor::from_data(
+        TensorData::new(x_arr.as_slice().unwrap().to_vec(), [batch, in_dim]),
+        &device,
+    );
+    let grid_t: Tensor<B, 2> = Tensor::from_data(
+        TensorData::new(grid_full.as_slice().unwrap().to_vec(), [in_dim, knots]),
+        &device,
+    );
+
+    let actual_t: Tensor<B, 3> = spline::b_batch(x_t, grid_t, k);
+    let actual_data = actual_t.into_data().convert::<f32>();
+    let actual = actual_data.as_slice::<f32>().unwrap();
+
+    for b in 0..batch {
+        for i in 0..in_dim {
+            for c in 0..(knots - k - 1) {
+                let flat = (b * in_dim + i) * (knots - k - 1) + c;
+                assert_abs_diff_eq!(
+                    actual[flat],
+                    expected[[b, i, c]],
+                    epsilon = 1e-6
+                );
+            }
+        }
+    }
+}

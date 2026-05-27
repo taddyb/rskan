@@ -2,6 +2,8 @@
 
 use ndarray::{Array2, Array3, ArrayView2, ArrayView3};
 
+use burn::tensor::{backend::Backend, Tensor};
+
 use crate::linalg::cholesky_solve;
 
 /// Extend a `[I, G+1]` uniform-linspace grid with `k_extend` ghost knots on each
@@ -152,4 +154,53 @@ pub fn curve2coef(
         }
     }
     coef
+}
+
+/// Burn-tensor B-spline basis evaluator with autograd support.
+///
+/// Iterative Cox-de Boor (pykan's `spline.B_batch` recursion unrolled to keep
+/// the autodiff tape linear in `k`). Input `x` shape `[B, I]`, `grid` shape
+/// `[I, K]`, output `[B, I, K - k - 1]`.
+///
+/// NaN values (from degenerate grids only) are zeroed via `mask_fill`, matching
+/// pykan's `torch.nan_to_num`.
+pub fn b_batch<B: Backend>(
+    x: Tensor<B, 2>,
+    grid: Tensor<B, 2>,
+    k: usize,
+) -> Tensor<B, 3> {
+    let [batch, in_dim] = x.dims();
+    let [grid_in, knots] = grid.dims();
+    assert_eq!(grid_in, in_dim, "grid in_dim must match x in_dim");
+    assert!(knots > k + 1, "grid must have > k+1 knots");
+
+    let x3 = x.unsqueeze_dim::<3>(2);                           // [B, I, 1]
+    let grid3 = grid.unsqueeze_dim::<3>(0);                     // [1, I, K]
+
+    // k=0 base case: indicator [grid[j], grid[j+1])
+    let lo = grid3.clone().slice([0..1, 0..in_dim, 0..(knots - 1)]);
+    let hi = grid3.clone().slice([0..1, 0..in_dim, 1..knots]);
+    let mut v = x3.clone().greater_equal(lo).float()
+              * x3.clone().lower(hi).float();                    // [B, I, K-1]
+
+    // Iterative Cox-de Boor: k_curr in 1..=k.
+    for k_curr in 1..=k {
+        let len_prev = knots - k_curr;
+        let g_a = grid3.clone().slice([0..1, 0..in_dim, 0..(knots - k_curr - 1)]);
+        let g_b = grid3.clone().slice([0..1, 0..in_dim, k_curr..(knots - 1)]);
+        let g_c = grid3.clone().slice([0..1, 0..in_dim, (k_curr + 1)..knots]);
+        let g_d = grid3.clone().slice([0..1, 0..in_dim, 1..(knots - k_curr)]);
+
+        let lf = (x3.clone() - g_a.clone()) / (g_b - g_a);
+        let rf = (g_c.clone() - x3.clone()) / (g_c - g_d);
+
+        let v_l = v.clone().slice([0..batch, 0..in_dim, 0..(len_prev - 1)]);
+        let v_r = v.slice([0..batch, 0..in_dim, 1..len_prev]);
+
+        v = lf * v_l + rf * v_r;                                // [B, I, len_prev - 1]
+    }
+
+    // pykan parity: nan_to_num (only fires for degenerate grids — no-op here).
+    let nan_mask = v.clone().is_nan();
+    v.mask_fill(nan_mask, 0.0)
 }
