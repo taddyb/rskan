@@ -294,3 +294,44 @@ fn init_from_parts_respects_trainability_flags() {
     assert!(!layer.grid.is_require_grad(),       "grid should be frozen");
     assert!(!layer.mask.is_require_grad(),       "mask should be frozen");
 }
+
+#[test]
+fn kan_forward_equals_manual_layer_composition() {
+    use rskan::{Kan, KanConfig, KanLayer, KanLayerConfig};
+
+    let device = Default::default();
+    let cfg = KanConfig::new(vec![3, 4, 2], SEED)
+        .with_grid(5).with_k(3).with_noise_scale(0.3);
+
+    let model: Kan<B> = cfg.init(&device);
+    assert_eq!(model.layers.len(), 2);
+
+    // Build the same two layers manually with sub-seeds = SEED + l.
+    let layer0: KanLayer<B> = KanLayerConfig::new(3, 4, SEED.wrapping_add(0))
+        .with_num(5).with_k(3).with_noise_scale(0.3).init(&device);
+    let layer1: KanLayer<B> = KanLayerConfig::new(4, 2, SEED.wrapping_add(1))
+        .with_num(5).with_k(3).with_noise_scale(0.3).init(&device);
+
+    // Inputs.
+    let batch = 6usize;
+    let x_data: Vec<f32> = (0..batch * 3).map(|n| -0.4 + (n as f32) * 0.03).collect();
+    let x_t: Tensor<B, 2> = Tensor::from_data(
+        TensorData::new(x_data, [batch, 3]),
+        &device,
+    );
+
+    let y_model = model.forward(x_t.clone());
+    let y_manual = layer1.forward(layer0.forward(x_t));
+
+    let diff = (y_model - y_manual).abs().max().into_scalar();
+    assert!(diff < 1e-6, "Kan forward should equal manual composition; max diff = {diff}");
+}
+
+#[test]
+fn kan_requires_at_least_two_widths() {
+    let device = Default::default();
+    let result = std::panic::catch_unwind(|| {
+        rskan::KanConfig::new(vec![5], SEED).init::<B>(&device)
+    });
+    assert!(result.is_err());
+}

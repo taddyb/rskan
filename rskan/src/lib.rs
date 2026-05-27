@@ -14,4 +14,4 @@ pub mod kan;
 
 // Public re-exports — added in later tasks as types land:
 pub use layer::{KanLayer, KanLayerConfig};
-// pub use kan::{Kan, KanConfig};  // Uncommented in Task 10
+pub use kan::{Kan, KanConfig};
