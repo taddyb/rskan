@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rskan"
+version = "0.1.0"
+description = "Burn-based KAN layers, Python bindings."
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "numpy>=1.24", "pykan>=0.2"]
+
+[tool.maturin]
+python-source = "python"
+module-name   = "rskan._rskan_py"
+features      = ["pyo3/extension-module"]
