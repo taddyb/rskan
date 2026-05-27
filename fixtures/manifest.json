@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "dir": "kanlayer_i3_o5_k2_g3_s1",
+      "kind": "layer",
+      "name": "kanlayer_i3_o5_k2_g3_s1"
+    },
+    {
+      "dir": "kanlayer_i8_o8_k3_g5_s1",
+      "kind": "layer",
+      "name": "kanlayer_i8_o8_k3_g5_s1"
+    },
+    {
+      "dir": "kanlayer_i1_o1_k3_g5_s1",
+      "kind": "layer",
+      "name": "kanlayer_i1_o1_k3_g5_s1"
+    },
+    {
+      "dir": "kanlayer_i21_o21_k3_g5_s1",
+      "kind": "layer",
+      "name": "kanlayer_i21_o21_k3_g5_s1"
+    },
+    {
+      "dir": "kanlayer_i3_o3_k3_g1_s1",
+      "kind": "layer",
+      "name": "kanlayer_i3_o3_k3_g1_s1"
+    },
+    {
+      "dir": "kanlayer_i3_o3_k3_g5_s1_ood",
+      "kind": "layer",
+      "name": "kanlayer_i3_o3_k3_g5_s1_ood"
+    },
+    {
+      "dir": "kan_w21x21x21_k3_g5_s1",
+      "kind": "kan",
+      "name": "kan_w21x21x21_k3_g5_s1"
+    },
+    {
+      "dir": "kan_w8x8x8x8_k3_g5_s1",
+      "kind": "kan",
+      "name": "kan_w8x8x8x8_k3_g5_s1"
+    }
+  ],
+  "pykan_version": "0.2.8"
+}

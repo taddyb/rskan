@@ -1,0 +1,23 @@
+{
+  "batch": 16,
+  "grid_range": [
+    -1.0,
+    1.0
+  ],
+  "in_dim": 3,
+  "k": 3,
+  "name": "kanlayer_i3_o3_k3_g5_s1_ood",
+  "noise_scale": 0.5,
+  "num": 5,
+  "out_dim": 3,
+  "pykan_version": "0.2.8",
+  "sb_trainable": true,
+  "scale_base_mu": 0.0,
+  "scale_base_sigma": 1.0,
+  "scale_sp": 1.0,
+  "sp_trainable": true,
+  "weight_seed": 1,
+  "x_high": 1.5,
+  "x_low": -1.5,
+  "x_seed": 3735928558
+}
