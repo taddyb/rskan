@@ -2,12 +2,13 @@
 
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::{Autodiff, NdArray};
+use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 use numpy::ndarray::{Array2, Array3};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2, PyReadonlyArray3};
-#[allow(unused_imports)]
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 use rskan::{KanLayer, KanLayerConfig};
 
 type B = Autodiff<NdArray<f32>>;
@@ -79,14 +80,14 @@ fn nd3_to_tensor(arr: Array3<f32>, device: &Dev) -> Tensor<B, 3> {
     Tensor::from_data(TensorData::new(vec, [d0, d1, d2]), device)
 }
 
-fn tensor2_to_pyarray<'py>(py: Python<'py>, t: Tensor<B, 2>) -> Bound<'py, PyArray2<f32>> {
+fn tensor2_to_pyarray<'py, BB: Backend>(py: Python<'py>, t: Tensor<BB, 2>) -> Bound<'py, PyArray2<f32>> {
     let dims = t.dims();
     let data = t.into_data().convert::<f32>();
     let slice = data.as_slice::<f32>().unwrap();
     let arr = Array2::from_shape_vec((dims[0], dims[1]), slice.to_vec()).unwrap();
     arr.into_pyarray_bound(py)
 }
-fn tensor3_to_pyarray<'py>(py: Python<'py>, t: Tensor<B, 3>) -> Bound<'py, PyArray3<f32>> {
+fn tensor3_to_pyarray<'py, BB: Backend>(py: Python<'py>, t: Tensor<BB, 3>) -> Bound<'py, PyArray3<f32>> {
     let dims = t.dims();
     let data = t.into_data().convert::<f32>();
     let slice = data.as_slice::<f32>().unwrap();
@@ -207,5 +208,82 @@ impl PyKanLayer {
         let x_t = nd2_to_tensor(x_arr, &self.device);
         let y_t = self.inner.forward(x_t);
         Ok(tensor2_to_pyarray(py, y_t))
+    }
+
+    #[pyo3(signature = (x, *, grad_y=None))]
+    fn forward_with_grad<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray2<'py, f32>,
+        grad_y: Option<PyReadonlyArray2<'py, f32>>,
+    ) -> PyResult<Py<PyTuple>> {
+        let x_view = x.as_array();
+        let (batch, in_dim) = (x_view.shape()[0], x_view.shape()[1]);
+        let expected_in = self.inner.grid.val().dims()[0];
+        if in_dim != expected_in {
+            return Err(PyValueError::new_err(format!(
+                "x in_dim {in_dim} != layer in_dim {expected_in}"
+            )));
+        }
+        let out_dim = self.inner.coef.val().dims()[1];
+
+        // Marshal x and (optional) grad_y into Burn tensors.
+        let x_arr: Array2<f32> = x_view.to_owned();
+        let x_t = nd2_to_tensor(x_arr, &self.device).require_grad();
+        let y_t: Tensor<B, 2> = self.inner.forward(x_t.clone());
+
+        // Compose the scalar loss whose gradient w.r.t. each leaf equals grad_y (or ones).
+        let loss = if let Some(gy) = grad_y {
+            let gy_view = gy.as_array();
+            let gy_shape = gy_view.shape();
+            if gy_shape[0] != batch || gy_shape[1] != out_dim {
+                return Err(PyValueError::new_err(format!(
+                    "grad_y shape {:?} != y shape [{batch}, {out_dim}]",
+                    gy_shape
+                )));
+            }
+            let gy_t = nd2_to_tensor(gy_view.to_owned(), &self.device);
+            (y_t.clone() * gy_t).sum()
+        } else {
+            y_t.clone().sum()
+        };
+
+        let grads = loss.backward();
+
+        let gx = x_t
+            .grad(&grads)
+            .ok_or_else(|| PyTypeError::new_err("x.grad is None — forward path may not be differentiable"))?;
+        let gcoef = self
+            .inner
+            .coef
+            .val()
+            .grad(&grads)
+            .ok_or_else(|| PyTypeError::new_err("coef.grad is None"))?;
+        let gsb = self
+            .inner
+            .scale_base
+            .val()
+            .grad(&grads)
+            .ok_or_else(|| PyTypeError::new_err("scale_base.grad is None"))?;
+        let gsp = self
+            .inner
+            .scale_sp
+            .val()
+            .grad(&grads)
+            .ok_or_else(|| PyTypeError::new_err("scale_sp.grad is None"))?;
+
+        let y_np = tensor2_to_pyarray(py, y_t);
+        let gx_np = tensor2_to_pyarray(py, gx);
+        let gcoef_np = tensor3_to_pyarray(py, gcoef);
+        let gsb_np = tensor2_to_pyarray(py, gsb);
+        let gsp_np = tensor2_to_pyarray(py, gsp);
+
+        let dict = PyDict::new_bound(py);
+        dict.set_item("x", gx_np)?;
+        dict.set_item("coef", gcoef_np)?;
+        dict.set_item("scale_base", gsb_np)?;
+        dict.set_item("scale_sp", gsp_np)?;
+
+        Ok(PyTuple::new_bound(py, &[y_np.into_py(py), dict.into_py(py)]).into())
     }
 }
