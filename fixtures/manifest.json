@@ -41,5 +41,6 @@
       "name": "kan_w8x8x8x8_k3_g5_s1"
     }
   ],
-  "pykan_version": "0.2.8"
+  "pykan_version": "0.2.8",
+  "schema_version": 1
 }

@@ -93,8 +93,11 @@ def _ensure_clean(path: Path) -> None:
 def _save(arr: torch.Tensor | np.ndarray, dst: Path) -> None:
     if isinstance(arr, torch.Tensor):
         arr = arr.detach().cpu().numpy()
-    arr = np.ascontiguousarray(arr.astype(np.float32))
-    np.save(dst, arr)
+    assert arr.dtype == np.float32, (
+        f"expected float32 for {dst.name}, got {arr.dtype}; "
+        "torch default dtype may have been mutated upstream"
+    )
+    np.save(dst, np.ascontiguousarray(arr))
 
 
 def export_layer_case(c: LayerCase) -> dict:
@@ -241,6 +244,13 @@ def _pykan_version() -> str:
 
 
 def main() -> None:
+    torch.set_default_dtype(torch.float32)
+    EXPECTED_PYKAN = "0.2.8"
+    detected = _pykan_version()
+    assert detected == EXPECTED_PYKAN, (
+        f"fixtures are pinned to pykan {EXPECTED_PYKAN}, but {detected} is installed; "
+        "either install the expected version or bump EXPECTED_PYKAN and re-validate parity"
+    )
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     manifest: list[dict] = []
     for c in LAYER_CASES:
@@ -248,8 +258,14 @@ def main() -> None:
     for c in KAN_CASES:
         manifest.append(export_kan_case(c))
     with (FIXTURES_DIR / "manifest.json").open("w") as f:
-        json.dump({"cases": manifest, "pykan_version": _pykan_version()},
-                  f, indent=2, sort_keys=True)
+        json.dump(
+            {
+                "schema_version": 1,
+                "pykan_version": _pykan_version(),
+                "cases": manifest,
+            },
+            f, indent=2, sort_keys=True,
+        )
     print(f"Exported {len(manifest)} fixtures to {FIXTURES_DIR}")
 
 
