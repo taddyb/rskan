@@ -7,7 +7,10 @@
 
 use burn::config::Config;
 use burn::module::{Module, Param};
+use burn::tensor::activation::silu;
 use burn::tensor::{backend::Backend, Tensor};
+
+use crate::spline::coef2curve;
 
 /// pykan parity: the constructor mirrors `KANLayer.__init__`.
 ///
@@ -110,4 +113,35 @@ pub struct KanLayer<B: Backend> {
     pub scale_sp:   Param<Tensor<B, 2>>,    // [I, O] — trainable iff sp_trainable
     pub mask:       Param<Tensor<B, 2>>,    // [I, O] — frozen (ones in v1)
     pub k: usize,
+}
+
+impl<B: Backend> KanLayer<B> {
+    /// Forward pass.
+    ///
+    /// Input `x` shape `[B, in_dim]`. Output shape `[B, out_dim]`.
+    ///
+    /// `y[b, o] = Σ_i mask[i, o] · (scale_base[i, o] · SiLU(x[b, i])
+    ///                            + scale_sp[i, o]   · spline_{i,o}(x[b, i]))`
+    ///
+    /// Equivalent to pykan's `KANLayer.forward(x)[0]` — we drop the
+    /// `(preacts, postacts, postspline)` tuple returns.
+    pub fn forward(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
+        let base = silu(x.clone());                                  // [B, I]
+        let spline = coef2curve(
+            x,
+            self.grid.val(),
+            self.coef.val(),
+            self.k,
+        );                                                            // [B, I, O]
+
+        let sb = self.scale_base.val().unsqueeze_dim::<3>(0);         // [1, I, O]
+        let sp = self.scale_sp.val().unsqueeze_dim::<3>(0);           // [1, I, O]
+        let m  = self.mask.val().unsqueeze_dim::<3>(0);               // [1, I, O]
+        let base3 = base.unsqueeze_dim::<3>(2);                       // [B, I, 1]
+
+        let y = sb * base3 + sp * spline;                              // [B, I, O]
+        let y = y * m;                                                 // [B, I, O]
+        // Sum over I, drop the singleton dim → [B, O]
+        y.sum_dim(1).squeeze_dim::<2>(1)
+    }
 }
