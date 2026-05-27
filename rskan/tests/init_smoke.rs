@@ -176,3 +176,77 @@ fn forward_zero_scale_base_keeps_only_spline_branch() {
     let max = diff.into_scalar();
     assert!(max < 1e-5, "max diff = {max}");
 }
+
+#[test]
+fn init_same_seed_produces_identical_weights() {
+    let device = Default::default();
+    let cfg = KanLayerConfig::new(4, 3, SEED).with_num(5).with_k(3);
+
+    let a: KanLayer<B> = cfg.init(&device);
+    let b: KanLayer<B> = cfg.init(&device);
+
+    let max_diff = |t1: Tensor<B, 2>, t2: Tensor<B, 2>| -> f32 {
+        (t1 - t2).abs().max().into_scalar()
+    };
+    let max_diff3 = |t1: Tensor<B, 3>, t2: Tensor<B, 3>| -> f32 {
+        (t1 - t2).abs().max().into_scalar()
+    };
+
+    assert_eq!(max_diff(a.grid.val(), b.grid.val()),             0.0);
+    assert_eq!(max_diff3(a.coef.val(), b.coef.val()),            0.0);
+    assert_eq!(max_diff(a.scale_base.val(), b.scale_base.val()), 0.0);
+    assert_eq!(max_diff(a.scale_sp.val(), b.scale_sp.val()),     0.0);
+    assert_eq!(max_diff(a.mask.val(), b.mask.val()),             0.0);
+}
+
+#[test]
+fn init_different_seeds_produce_different_coefs() {
+    let device = Default::default();
+    let a = KanLayerConfig::new(4, 3, 1).with_num(5).with_k(3).init::<B>(&device);
+    let b = KanLayerConfig::new(4, 3, 2).with_num(5).with_k(3).init::<B>(&device);
+
+    let diff = (a.coef.val() - b.coef.val()).abs().max().into_scalar();
+    assert!(diff > 1e-4, "different seeds should produce different coef");
+}
+
+#[test]
+fn init_shapes_are_correct() {
+    let device = Default::default();
+    let (i, o, num, k) = (7usize, 5usize, 6usize, 3usize);
+    let layer = KanLayerConfig::new(i, o, SEED).with_num(num).with_k(k).init::<B>(&device);
+
+    assert_eq!(layer.grid.val().dims(),       [i, num + 1 + 2 * k]);
+    assert_eq!(layer.coef.val().dims(),       [i, o, num + k]);
+    assert_eq!(layer.scale_base.val().dims(), [i, o]);
+    assert_eq!(layer.scale_sp.val().dims(),   [i, o]);
+    assert_eq!(layer.mask.val().dims(),       [i, o]);
+
+    // Mask is all ones.
+    let mask_max = layer.mask.val().clone().max().into_scalar();
+    let mask_min = layer.mask.val().min().into_scalar();
+    assert_eq!(mask_max, 1.0);
+    assert_eq!(mask_min, 1.0);
+}
+
+#[test]
+fn init_respects_trainability_flags() {
+    // `is_require_grad` is a no-op on non-autodiff backends (always returns
+    // false), so the trainability flags can only be observed under Autodiff.
+    use burn::backend::Autodiff;
+    type AD = Autodiff<NdArray<f32>>;
+
+    let device = Default::default();
+    let frozen_sb = KanLayerConfig::new(3, 3, SEED)
+        .with_sb_trainable(false)
+        .init::<AD>(&device);
+    assert!(!frozen_sb.scale_base.is_require_grad());
+    assert!( frozen_sb.coef.is_require_grad());
+    assert!( frozen_sb.scale_sp.is_require_grad());
+    assert!(!frozen_sb.grid.is_require_grad());
+    assert!(!frozen_sb.mask.is_require_grad());
+
+    let frozen_sp = KanLayerConfig::new(3, 3, SEED)
+        .with_sp_trainable(false)
+        .init::<AD>(&device);
+    assert!(!frozen_sp.scale_sp.is_require_grad());
+}

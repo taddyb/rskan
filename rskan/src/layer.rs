@@ -10,7 +10,13 @@ use burn::module::{Module, Param};
 use burn::tensor::activation::silu;
 use burn::tensor::{backend::Backend, Tensor};
 
-use crate::spline::coef2curve;
+use ndarray::{Array2 as NdArray2, Axis, Slice};
+
+use crate::init::{
+    build_grid, build_scale_sp, rng_from_seed, sample_noises, sample_scale_base,
+    to_param_2, to_param_3,
+};
+use crate::spline::{coef2curve, curve2coef};
 
 /// pykan parity: the constructor mirrors `KANLayer.__init__`.
 ///
@@ -97,6 +103,63 @@ impl KanLayerConfig {
             scale_base: Param::from_tensor(scale_base).set_require_grad(self.sb_trainable),
             scale_sp:   Param::from_tensor(scale_sp).set_require_grad(self.sp_trainable),
             mask:       Param::from_tensor(mask).set_require_grad(false),
+            k: self.k,
+        }
+    }
+
+    /// Build a new `KanLayer` with pykan-recipe seeded initialization.
+    ///
+    /// Structural-only RNG parity vs pykan: same seed → reproducible across
+    /// rskan runs, but NOT bit-equivalent to pykan with the same seed
+    /// (PyTorch's Mersenne-Twister vs Rust's StdRng).
+    pub fn init<B: Backend>(&self, device: &B::Device) -> KanLayer<B> {
+        assert!(self.in_dim  > 0, "in_dim must be > 0");
+        assert!(self.out_dim > 0, "out_dim must be > 0");
+        assert!(self.num     > 0, "num must be > 0");
+        assert!(self.k       > 0, "k must be > 0");
+        assert!(self.grid_range[0] < self.grid_range[1],
+                "grid_range must have lo < hi, got {:?}", self.grid_range);
+
+        let mut rng = rng_from_seed(self.seed);
+
+        // (1) Grid.
+        let grid_full: NdArray2<f32> =
+            build_grid(self.in_dim, self.num, self.k, self.grid_range);
+
+        // (2) Noise targets.
+        let noises = sample_noises(&mut rng, self.in_dim, self.out_dim, self.num, self.noise_scale);
+
+        // (3) coef = curve2coef(grid_inner.T, noises, grid_full, k).
+        let grid_inner_t = grid_full
+            .slice_axis(
+                Axis(1),
+                Slice::from(self.k..self.k + self.num + 1),
+            )
+            .t()
+            .to_owned();
+        let coef = curve2coef(grid_inner_t.view(), noises.view(), grid_full.view(), self.k);
+
+        // (4) Mask = ones[I, O] (sparse_init=false in v1).
+        let mask = NdArray2::<f32>::ones((self.in_dim, self.out_dim));
+
+        // (5a) scale_base ~ (mu + sigma * U[-1, 1]) / sqrt(in_dim).
+        let scale_base = sample_scale_base(
+            &mut rng,
+            self.in_dim,
+            self.out_dim,
+            self.scale_base_mu,
+            self.scale_base_sigma,
+        );
+
+        // (5b) scale_sp = scale_sp / sqrt(in_dim) (mask=ones, omitted).
+        let scale_sp = build_scale_sp(self.in_dim, self.out_dim, self.scale_sp);
+
+        KanLayer {
+            grid:       to_param_2(grid_full,  device).set_require_grad(false),
+            coef:       to_param_3(coef,       device).set_require_grad(true),
+            scale_base: to_param_2(scale_base, device).set_require_grad(self.sb_trainable),
+            scale_sp:   to_param_2(scale_sp,   device).set_require_grad(self.sp_trainable),
+            mask:       to_param_2(mask,       device).set_require_grad(false),
             k: self.k,
         }
     }
