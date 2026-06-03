@@ -4,7 +4,7 @@ use ndarray::{Array2, Array3, ArrayView2, ArrayView3};
 
 use burn::tensor::{backend::Backend, Tensor};
 
-use crate::linalg::cholesky_solve;
+use crate::linalg::cholesky_solve_robust;
 
 /// Extend a `[I, G+1]` uniform-linspace grid with `k_extend` ghost knots on each
 /// side, spaced by the per-row interval `h_i = (grid[i, -1] - grid[i, 0]) / G`.
@@ -130,11 +130,9 @@ pub fn curve2coef(
                 m[[b, c]] = mat[[b, i, c]];
             }
         }
-        // MtM = M^T M + λ I       shape [n_basis, n_basis]
-        let mut mtm = m.t().dot(&m);
-        for d in 0..n_basis {
-            mtm[[d, d]] += CURVE2COEF_RIDGE;
-        }
+        // MtM = M^T M              shape [n_basis, n_basis]
+        // Ridge is applied inside cholesky_solve_robust (base = CURVE2COEF_RIDGE).
+        let mtm = m.t().dot(&m);
         // Y_i = y_eval[:, i, :]   shape [batch, out_dim]
         let mut y_i = Array2::<f32>::zeros((batch, out_dim));
         for b in 0..batch {
@@ -144,8 +142,9 @@ pub fn curve2coef(
         }
         // MtY = M^T Y_i           shape [n_basis, out_dim]
         let mty = m.t().dot(&y_i);
-        // Solve MtM · C = MtY     C shape [n_basis, out_dim]
-        let c_sol = cholesky_solve(mtm.view(), mty.view());
+        // Solve (MtM + λI) · C = MtY; λ starts at CURVE2COEF_RIDGE and
+        // escalates if the matrix is rank-deficient (e.g. grid=50, k=2).
+        let c_sol = cholesky_solve_robust(mtm.view(), mty.view(), CURVE2COEF_RIDGE);
 
         for o in 0..out_dim {
             for cidx in 0..n_basis {

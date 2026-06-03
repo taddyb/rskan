@@ -335,3 +335,28 @@ fn kan_requires_at_least_two_widths() {
     });
     assert!(result.is_err());
 }
+
+/// Confirm KanLayer can initialise across the full grid/k matrix DDR uses
+/// in production. Was added after DDR's grid=50/k=2 config broke the
+/// original cholesky_solve at the 1e-8 ridge.
+#[test]
+fn kan_layer_inits_at_ddr_production_grid_50_k_2() {
+    let device = Default::default();
+    let _layer = KanLayerConfig::new(21, 21, 42)
+        .with_num(50)
+        .with_k(2)
+        .with_noise_scale(0.3)
+        .init::<B>(&device);
+}
+
+#[test]
+fn kan_layer_inits_across_grid_k_matrix() {
+    let device = Default::default();
+    for (grid, k) in [(5, 3), (10, 2), (10, 3), (20, 2), (30, 2), (50, 2), (50, 3), (100, 2)] {
+        let _layer = KanLayerConfig::new(8, 8, 0)
+            .with_num(grid)
+            .with_k(k)
+            .with_noise_scale(0.3)
+            .init::<B>(&device);
+    }
+}
