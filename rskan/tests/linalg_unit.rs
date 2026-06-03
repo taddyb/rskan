@@ -1,7 +1,7 @@
 //! Cholesky solver unit tests.
 
 use approx::assert_abs_diff_eq;
-use ndarray::{array, Array1, Array2};
+use ndarray::{array, Array2};
 use rskan::linalg;
 
 #[test]
@@ -51,5 +51,64 @@ fn cholesky_solve_3x3_identity_rhs() {
 
     for i in 0..3 {
         assert_abs_diff_eq!(x[[i, 0]], 1.0, epsilon = 1e-5);
+    }
+}
+
+/// `cholesky_solve_robust` rescues rank-deficient matrices by escalating
+/// the Tikhonov ridge. A rank-1 2×2 matrix is the smallest example that
+/// reliably exercises the escalation path in f32.
+#[test]
+fn cholesky_solve_robust_handles_rank_deficient_matrix() {
+    use ndarray::array;
+
+    // Symmetric rank-1: eigenvalues {2, 0}.
+    let a = array![[1.0_f32, 1.0], [1.0, 1.0]];
+    let b = array![[1.0_f32], [1.0]];
+
+    // base_ridge = 1e-8: attempt 1 may or may not succeed in f32 (the
+    // ridge floor is close to the rounding floor). The robust solver
+    // escalates if needed and must produce a finite result.
+    let x = linalg::cholesky_solve_robust(a.view(), b.view(), 1e-8);
+
+    assert_eq!(x.shape(), &[2, 1]);
+    for &v in x.iter() {
+        assert!(v.is_finite(), "robust solve produced non-finite element: {v}");
+    }
+
+    // (A + λI) x ≈ b for the actual ridge used. We don't know which ridge
+    // attempt won, but at any ridge ≤ 1e-2, the residual should be small.
+    // Use a 1e-1 tolerance to cover the worst escalation case.
+    let lhs = a.dot(&x);
+    let residual: f32 = (&lhs - &b).iter().map(|v| v.abs()).sum();
+    assert!(
+        residual < 1e-1,
+        "(A + λI) x ≈ b residual too large: {residual}"
+    );
+}
+
+/// `cholesky_solve_robust` is bit-equivalent to `cholesky_solve` on
+/// well-conditioned matrices — i.e. attempt 1 wins, no escalation.
+#[test]
+fn cholesky_solve_robust_matches_plain_on_well_conditioned() {
+    use ndarray::array;
+    // Symmetric positive-definite 3×3, well-conditioned enough that
+    // base_ridge = 1e-8 succeeds on first attempt.
+    let a = array![
+        [4.0_f32, 1.0, 0.0],
+        [1.0,     3.0, 1.0],
+        [0.0,     1.0, 2.0],
+    ];
+    let b = array![[1.0_f32], [2.0], [3.0]];
+
+    // Apply the same 1e-8 ridge that the robust solver uses on attempt 1.
+    let mut a_ridge = a.clone();
+    for i in 0..3 { a_ridge[[i, i]] += 1e-8; }
+    let plain = linalg::cholesky_solve(a_ridge.view(), b.view());
+
+    let robust = linalg::cholesky_solve_robust(a.view(), b.view(), 1e-8);
+
+    for (p, r) in plain.iter().zip(robust.iter()) {
+        let diff = (p - r).abs();
+        assert!(diff < 1e-6, "robust drifted from plain at well-conditioned input: |{p} - {r}| = {diff}");
     }
 }

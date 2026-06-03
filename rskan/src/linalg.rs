@@ -14,9 +14,10 @@ use ndarray::{Array2, ArrayView2};
 
 /// In-place Cholesky factorization: `A = L · L^T` where `L` is lower-triangular.
 /// On success, overwrites `a` so its lower triangle holds `L` (upper triangle
-/// is zeroed). On failure, returns `Err(j)` naming the index where the diagonal
-/// went non-positive.
-fn try_cholesky_in_place(a: &mut Array2<f32>) -> Result<(), usize> {
+/// is zeroed). On failure, returns `Err((j, diag))` where `j` is the index
+/// where the diagonal went non-positive and `diag` is the Schur complement
+/// that caused the failure.
+fn try_cholesky_in_place(a: &mut Array2<f32>) -> Result<(), (usize, f32)> {
     let n = a.shape()[0];
     assert_eq!(a.shape()[1], n, "cholesky requires a square matrix");
 
@@ -26,7 +27,7 @@ fn try_cholesky_in_place(a: &mut Array2<f32>) -> Result<(), usize> {
             diag -= a[[j, k]] * a[[j, k]];
         }
         if diag <= 0.0 {
-            return Err(j);
+            return Err((j, diag));
         }
         let ljj = diag.sqrt();
         a[[j, j]] = ljj;
@@ -92,10 +93,9 @@ pub fn cholesky_solve(a: ArrayView2<f32>, b: ArrayView2<f32>) -> Array2<f32> {
 
     let mut l = a.to_owned();
     match try_cholesky_in_place(&mut l) {
-        Ok(()) => {},
-        Err(j) => panic!(
-            "cholesky: non-SPD pivot at index {j} ({}); add a ridge",
-            l[[j, j]],
+        Ok(()) => {}
+        Err((j, diag)) => panic!(
+            "cholesky: non-SPD pivot at index {j} (Schur complement = {diag}); add a ridge"
         ),
     }
 
