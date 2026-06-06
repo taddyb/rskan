@@ -127,7 +127,7 @@ pub fn cholesky_solve_robust(
     assert_eq!(b.shape()[0], n, "b row count must equal A's size");
 
     const RIDGE_MULTIPLIERS: [f32; 4] = [1.0, 100.0, 10_000.0, 1_000_000.0];
-    for (attempt, &mult) in RIDGE_MULTIPLIERS.iter().enumerate() {
+    for &mult in RIDGE_MULTIPLIERS.iter() {
         let ridge = base_ridge * mult;
         let mut l = a.to_owned();
         for i in 0..n {
@@ -137,16 +137,6 @@ pub fn cholesky_solve_robust(
             let mut x = b.to_owned();
             forward_sub(&l, &mut x);
             back_sub(&l, &mut x);
-            if attempt > 0 {
-                // Surface so downstream tests can verify the well-conditioned
-                // code path is hit on small grids. eprintln is intentional:
-                // init is one-shot, this is informational, not a hot loop.
-                eprintln!(
-                    "rskan: cholesky_solve_robust escalated to ridge {ridge:e} \
-                     (attempt {})",
-                    attempt + 1,
-                );
-            }
             return x;
         }
     }
